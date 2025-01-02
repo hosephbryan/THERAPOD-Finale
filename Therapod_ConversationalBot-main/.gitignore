@@ -1,0 +1,11 @@
+/espeak-ng-data
+/Models/therapod-model/*.gguf
+/vectorstore
+/en_GB-cori*
+/libespeak*
+/libon*
+/libpiper*
+/libtas*
+/piper
+/*.wav
+/__pycache__
