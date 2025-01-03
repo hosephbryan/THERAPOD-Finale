@@ -74,25 +74,7 @@ def initialize_conversation_chain(model:str, retriever):
 
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-
-    ### Statefully manage chat history ###
-    store = {}
-
-    def get_session_history(session_id: str) -> BaseChatMessageHistory:
-        if session_id not in store:
-            store[session_id] = ChatMessageHistory()
-        return store[session_id]
-
-    conversational_rag_chain = RunnableWithMessageHistory(
-        rag_chain,
-        get_session_history,
-        input_messages_key="input",
-        history_messages_key="chat_history",
-        output_messages_key="answer",
-    )
-    print("Conversational chain created")
-
-    return conversational_rag_chain
+    return rag_chain
 
 
 def main():
@@ -109,7 +91,24 @@ def main():
     retriever = vectorstore.as_retriever()
     model = 'therapodLM'
 
-    chat_chain = initialize_conversation_chain(model, retriever)
+    rag_chain = initialize_conversation_chain(model, retriever)
+
+### Statefully manage chat history ###
+    store = {}
+
+    def get_session_history(session_id: str, chat_history=store) -> BaseChatMessageHistory:
+        if session_id not in chat_history:
+            chat_history[session_id] = ChatMessageHistory()
+        return chat_history[session_id]
+
+    chat_chain = RunnableWithMessageHistory(
+        rag_chain,
+        get_session_history,
+        input_messages_key="input",
+        history_messages_key="chat_history",
+        output_messages_key="answer",
+    )
+    print("Conversational chain created")
 
     session_history = []
 
@@ -118,14 +117,12 @@ def main():
         user_input, raw_text = listen_for_commands()
 
         critical_notif(raw_text)
-
-        session_history.append(f'Client: {raw_text}')
         
-
         if "exit" in user_input or "goodbye" in user_input:
             ai_response = "Alright, Take care! Feel free to reach out anytime."
             output_with_piper(ai_response, current_wavfile)
             break
+
         # Record the start time
         start_time = time.time()
         response_chain =  chat_chain.invoke(
@@ -141,9 +138,16 @@ def main():
         # Print the elapsed time
         print(f"RESPONSE GENERATION ran for {elapsed_time:.2f} seconds")
         
+        if len(response_chain["chat_history"]) > 10:
+            message_list = get_session_history("001-1", store)
+            save_message = message_list.messages[-10:]
+            print(save_message)
+            message_list.clear()
+            message_list.add_messages(save_message)
+
         ai_response = response_chain["answer"]
 
-        session_history.append(f'THERAPOD: {ai_response}')
+        session_history.append({"Client": raw_text, "Therapod": ai_response})
 
         output_with_piper(ai_response, current_wavfile)
         current_wavfile = output_wavfile_2 if current_wavfile == output_wavfile_1 else output_wavfile_1
