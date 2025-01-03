@@ -1,0 +1,25 @@
+from qwen2.5:3b-instruct-q4_K_M
+
+TEMPLATE """
+<|im_start|>system
+{{ .System }}<|im_end|>
+<|im_start|>user
+{{ .Prompt }}<|im_end|>
+<|im_start|>assistant
+"""
+ 
+PARAMETER stop "</"
+PARAMETER stop "<unk>"
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "<|im_end|>"
+PARAMETER num_ctx 2048
+PARAMETER num_predict 512	
+PARAMETER repeat_last_n 64
+PARAMETER temperature 0.8
+PARAMETER top_k 30
+PARAMETER top_p 0.3
+
+
+SYSTEM """
+You are THERAPOD, a Mental Health AI companion that specializes in Solution-Focused Brief Therapy and Motivational Interviewing, your main goal is to create a safe and empathetic space where users feel heard and supported. Always respond in a friendly, compassionate, and non-judgemental manner. **LIMIT YOUR SENTENCES TO AT MOST 5 SENTENCES**
+"""

@@ -22,33 +22,13 @@ def summary_conversation_chain(model:str, retriever):
         top_p=0.4,
         num_predict=512,
         num_ctx=2048,
-        num_gpu=1, 
+        num_gpu=1,
+        keep_alive=False,
     )
-
-    contextualize_q_system_prompt = (
-        "Given a chat history and pdf for past sessions "
-        "Generate an appriorate summary between the AI and Client"
-        "Format the summary in paragraph form and don't include other information besides the conversation history"
-        "Do not add additional information"
-    )
-
-
-    contextualize_q_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", contextualize_q_system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ]
-    )
-
-    history_aware_retriever = create_history_aware_retriever(
-        llm, retriever, contextualize_q_prompt
-    )
-
 
     ### Answer question ###
     system_prompt = (
-        "You are an assistant of a Psychologists"
+        "You the summarizer for an AI Mental Health Care Companion, Therapod"
         "Given the conversation history between the Psychologists and Client, generate a summary of the conversation"
         "Emphasize important events, and entities such as names, places, or experiences"
         "Your main goal is to provide an informative summary that will be used to generate a conversation report"
@@ -60,58 +40,31 @@ def summary_conversation_chain(model:str, retriever):
     qa_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
         ]
     )
-    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+    answer_chain = create_stuff_documents_chain(llm, qa_prompt)
 
-    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-
-
-    ### Statefully manage chat history ###
-    store = {}
-
-    def get_session_history(session_id: str) -> BaseChatMessageHistory:
-        if session_id not in store:
-            store[session_id] = ChatMessageHistory()
-        return store[session_id]
-
-    conversational_rag_chain = RunnableWithMessageHistory(
-        rag_chain,
-        get_session_history,
-        input_messages_key="input",
-        history_messages_key="chat_history",
-        output_messages_key="answer",
-    )
     print("Conversational chain created")
 
-    return conversational_rag_chain
+    return answer_chain
 
 
-file_directory="Conversation-history"
-embedding_model='sentence-transformers/all-MiniLM-L6-v2'
-embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
+def summarize():
+    file_directory="Conversation-history/session_history"
+    embedding_model='sentence-transformers/all-mpnet-base-v2'
+    embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
 
-past_chat_history = prepare_and_split_docs(file_directory)
-vectorstore = ingest_into_vectordb(past_chat_history, embeddings)
-retriever = vectorstore.as_retriever()
-model = 'therapodLM'
+    session_history = prepare_and_split_docs(file_directory)
+    vectorstore = ingest_into_vectordb(session_history, embeddings)
+    retriever = vectorstore.as_retriever()
+    model = 'qwen2.5:3b-instruct-q4_K_M'
 
-summary_chain = summary_conversation_chain(model, retriever)
-
-def summarize(history):
-    input_summary = '''
-    Refer only to this conversation history and do not add additional information. Please create a summary in paragraph form that preserves the context of the conversation
-    "{history}"
-    '''
-
+    summary_chain = summary_conversation_chain(model, retriever)
     response_chain = summary_chain.invoke(
-        {"input": input_summary},
-        config={"configurable": {"session_id": "summary"}}
+        {"context": session_history},
     )
-
-    context_summary = response_chain["answer"]
+    print(response_chain)
+    context_summary = response_chain
     context_summary = f'{context_summary}'
     return context_summary
 

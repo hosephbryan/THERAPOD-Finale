@@ -1,23 +1,27 @@
-import torch
-import time
 
+#from langchain_community.chat_models import ChatOllama
 from langchain_ollama import ChatOllama
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains import create_history_aware_retriever
-from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import SentenceTransformer, util
 
-from DetectEmotions import listen_for_commands
-from TTSpeech import output_with_piper
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.messages import trim_messages, AIMessage, SystemMessage, HumanMessage
+from langchain.chains import create_history_aware_retriever
+from langchain_huggingface import HuggingFaceEmbeddings
+
+#from DetectEmotions import listen_for_commands
+#from TTSpeech import output_with_piper
+#from summary import summarize
+#from critical import critical_notif
+import torch
+from rag_utils import prepare_and_split_docs, ingest_into_vectordb, save_session_to_pdf, add_to_session_history
 from summary import summarize
-from critical import critical_notif
-from rag_utils import prepare_and_split_docs, ingest_into_vectordb
-from post_summary import send_post_request
+import time
+#from post_summary import send_post_request
 
 def initialize_conversation_chain(model:str, retriever):
     llm = ChatOllama(
@@ -30,6 +34,16 @@ def initialize_conversation_chain(model:str, retriever):
         num_ctx=2048,
         num_gpu=1, 
     )
+
+
+    trimmer = trim_messages(
+        strategy="last",
+        token_counter=len,
+        max_tokens=7,
+        start_on="human",
+        allow_partial=False,
+        include_system=True,
+        )
 
     contextualize_q_system_prompt = (
         "Given a chat history and the latest user question "
@@ -49,7 +63,6 @@ def initialize_conversation_chain(model:str, retriever):
     history_aware_retriever = create_history_aware_retriever(
         llm, retriever, contextualize_q_prompt
     )
-
 
     ### Answer question ###
     system_prompt = (
@@ -76,12 +89,8 @@ def initialize_conversation_chain(model:str, retriever):
 
 
 def main():
-    output_wavfile_1 = "temp_output_1.wav"
-    output_wavfile_2 = "temp_output_2.wav"
-    current_wavfile = output_wavfile_1
-
     file_directory="Conversation-history"
-    embedding_model='sentence-transformers/all-mpnet-base-v2'
+    embedding_model='sentence-transformers/all-MiniLM-L6-v2'
     embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
 
     past_chat_history = prepare_and_split_docs(file_directory)
@@ -89,41 +98,43 @@ def main():
     retriever = vectorstore.as_retriever()
     model = 'therapodLM'
 
-    rag_chain = initialize_conversation_chain(model, retriever)
+    chat_chain = initialize_conversation_chain(model, retriever)
 
-### Statefully manage chat history ###
+    ### Statefully manage chat history ###
     store = {}
 
     def get_session_history(session_id: str, chat_history=store) -> BaseChatMessageHistory:
         if session_id not in chat_history:
             chat_history[session_id] = ChatMessageHistory()
         return chat_history[session_id]
-
-    chat_chain = RunnableWithMessageHistory(
-        rag_chain,
+    
+    conversational_rag_chain = RunnableWithMessageHistory(
+        chat_chain,
         get_session_history,
         input_messages_key="input",
         history_messages_key="chat_history",
         output_messages_key="answer",
-    )
+        )
     print("Conversational chain created")
 
     session_history = []
 
     while True:
 
-        user_input, raw_text = listen_for_commands()
+        #user_input, raw_text = listen_for_commands()
+        print("You:")
+        user_input = input()
 
-        critical_notif(raw_text)
+        #critical_notif(user_input)
         
         if "exit" in user_input or "goodbye" in user_input:
             ai_response = "Alright, Take care! Feel free to reach out anytime."
-            output_with_piper(ai_response, current_wavfile)
             break
 
         # Record the start time
         start_time = time.time()
-        response_chain =  chat_chain.invoke(
+
+        response_chain =  conversational_rag_chain.invoke(
             {"input": user_input},
             config={"configurable": {"session_id": "001-1"}}
         )
@@ -133,40 +144,42 @@ def main():
         # Calculate the elapsed time
         elapsed_time = end_time - start_time
 
-        # Print the elapsed time
-        print(f"RESPONSE GENERATION ran for {elapsed_time:.2f} seconds")
-        
-        if len(response_chain["chat_history"]) > 10:
+        if len(response_chain["chat_history"]) >= 8:
             message_list = get_session_history("001-1", store)
-            save_message = message_list.messages[-10:]
+            save_message = message_list.messages[-6:]
             print(save_message)
             message_list.clear()
             message_list.add_messages(save_message)
 
+        # Print the elapsed time
+        print(f"RESPONSE GENERATION ran for {elapsed_time:.2f} seconds")
+        #response_chain["chat_history"] = trim_history(response_chain["chat_history"], 3)
         ai_response = response_chain["answer"]
 
-        session_history.append({"Client": raw_text, "Therapod": ai_response})
-
-        output_with_piper(ai_response, current_wavfile)
-        current_wavfile = output_wavfile_2 if current_wavfile == output_wavfile_1 else output_wavfile_1
+        add_to_session_history(session_history, user_input, ai_response)
+        #print(session_history)
         print(f"AI Therapist: {ai_response}")
 
         torch.cuda.empty_cache()
+    
+    save_session_to_pdf(session_history)
+    summarized_history = summarize()
+    print(summarized_history)
 
+    '''
     start_time = time.time()
     summarized_history = summarize(session_history)
     print(summarized_history)
-    send_post_request(1, str(summarized_history))
-    print(send_post_request)
     # Record the end time
     end_time = time.time()
 
     # Calculate the elapsed time
     elapsed_time = end_time - start_time
 
-
     # Print the elapsed time
     print(f"SUMMARY GENERATION ran for {elapsed_time:.2f} seconds")
+    '''
+
 
 
 if __name__ == "__main__":
