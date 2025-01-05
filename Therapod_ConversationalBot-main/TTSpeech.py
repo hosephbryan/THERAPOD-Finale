@@ -50,9 +50,9 @@ def output_with_piper(text, output_file):
         
         # Safely remove the other output file if it exists
         safe_remove(other_file)
-
+        sanitized_text = text.replace("\n", " ")
         # Command to run the Piper executable with the recognized text and save to the current output file
-        command = f'echo "{text}" | ./piper -m en_GB-cori-high.onnx -f {output_file}'
+        command = f'echo "{sanitized_text}" | ./piper -m en_GB-cori-high.onnx -f {output_file}'
 
         # Run the command and wait for it to complete
         subprocess.run(command, shell=True, check=True)
